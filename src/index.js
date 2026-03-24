@@ -4,9 +4,11 @@ const crypto = require("crypto");
 const dotenv = require("dotenv");
 const { isInitializeRequest } = require("@modelcontextprotocol/sdk/types.js");
 const { StreamableHTTPServerTransport } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
+// 基于express 封装好的mcp server
 const { createMcpExpressApp } = require("@modelcontextprotocol/sdk/server/express.js");
 const { createMcpServer } = require("./mcpServer");
 
+// 加载环境变量
 const envPath = process.env.ENV_FILE
   ? path.resolve(process.cwd(), process.env.ENV_FILE)
   : fs.existsSync(path.resolve(process.cwd(), ".env"))
@@ -28,6 +30,7 @@ function unauthorized(res) {
   });
 }
 
+// token鉴权
 function authMiddleware(req, res, next) {
   if (!authToken) {
     next();
@@ -46,6 +49,7 @@ function authMiddleware(req, res, next) {
   next();
 }
 
+// 心跳
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
@@ -57,16 +61,21 @@ app.get("/health", (_req, res) => {
 app.post(mcpRoute, authMiddleware, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"];
   try {
+    // 已有会话的后续请求复用 
     if (sessionId && sessions.has(sessionId)) {
       const current = sessions.get(sessionId);
+      // 执行后续请求 对应的tool
       await current.transport.handleRequest(req, res, req.body);
       return;
     }
 
     if (!sessionId && isInitializeRequest(req.body)) {
       const server = createMcpServer();
+      // 创建管道实例，mcp服务需要一个管道 连接mcp与http服务器
       const transport = new StreamableHTTPServerTransport({
+        // 给每个新 MCP 会话生成唯一 sessionId
         sessionIdGenerator: () => crypto.randomUUID(),
+        // 当会话真正初始化成功后触发回调
         onsessioninitialized: (initializedSessionId) => {
           sessions.set(initializedSessionId, { transport, server });
         },
@@ -79,8 +88,9 @@ app.post(mcpRoute, authMiddleware, async (req, res) => {
         }
         await server.close();
       };
-
+      // 链接并处理请求
       await server.connect(transport);
+      // 执行初始化
       await transport.handleRequest(req, res, req.body);
       return;
     }
